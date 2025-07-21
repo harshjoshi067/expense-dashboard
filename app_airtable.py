@@ -1,96 +1,81 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import requests
+from pyairtable import Table
 
-# --- CONFIG ---
-st.set_page_config(page_title="📊 Interactive Expense Dashboard (Airtable)", layout="wide")
+# Set Streamlit layout
+st.set_page_config(page_title="📊 Expense Dashboard — Bills", layout="wide")
 st.title("📊 Interactive Expense Dashboard — Bills")
 
-# --- Airtable Setup ---
-AIRTABLE_TOKEN = st.secrets["airtable_token"]  # Set this in Streamlit Cloud secrets
+# Load Airtable API
+AIRTABLE_TOKEN = st.secrets["airtable_token"]
 BASE_ID = "appQFvAieZcCk4pGO"
 TABLE_NAME = "Bills"
-VIEW_NAME = "Grid view"
 
-# --- Airtable API Call ---
-headers = {
-    "Authorization": f"Bearer {AIRTABLE_TOKEN}"
-}
-url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}?view={VIEW_NAME}"
-records = []
+# Fetch data from Airtable
+table = Table(AIRTABLE_TOKEN, BASE_ID, TABLE_NAME)
+records = table.all()
+df = pd.DataFrame([r["fields"] for r in records])
 
-# Paginate if needed
-while url:
-    res = requests.get(url, headers=headers)
-    if res.status_code != 200:
-        st.error(f"Error fetching data: {res.status_code}")
-        st.stop()
-    data = res.json()
-    records.extend(data["records"])
-    url = data.get("offset", None)
-    if url:
-        url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}?view={VIEW_NAME}&offset={url}"
+# Show raw column names
+with st.expander("🗂️ Columns from Airtable:"):
+    st.write(list(df.columns))
 
-# --- Transform Records to DataFrame ---
-df = pd.DataFrame([record["fields"] for record in records])
-df.columns = df.columns.str.strip()  # Clean column names
+# Preprocess: drop rows missing key columns
+required_cols = ["Vendor", "Expense Category", "Amount", "InvoiceDate"]
+df = df.dropna(subset=required_cols)
 
-# Debug columns
-st.write("🧾 Columns from Airtable:", df.columns.tolist())
+# Clean Amount
+df["Amount"] = df["Amount"].replace('[\$,]', '', regex=True).astype(float)
 
-# --- Data Cleaning ---
-if 'InvoiceDate' not in df.columns:
-    st.error("❌ 'InvoiceDate' column is missing in Airtable data.")
-    st.stop()
+# Convert InvoiceDate
+df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], errors='coerce')
 
-df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'], errors='coerce')
+# Period creation
+df["Period_Month"] = df["InvoiceDate"].dt.to_period("M").dt.to_timestamp()
+df["Period_Quarter"] = df["InvoiceDate"].dt.to_period("Q").dt.to_timestamp()
 
-if 'Amount' in df.columns:
-    df['Amount'] = df['Amount'].replace('[\$,]', '', regex=True).astype(float)
-else:
-    st.error("❌ 'Amount' column missing.")
-    st.stop()
-
-required_cols = ['InvoiceDate', 'Vendor', 'Amount', 'Expense Category']
-missing_cols = [col for col in required_cols if col not in df.columns]
-if missing_cols:
-    st.error(f"Missing columns: {', '.join(missing_cols)}")
-    st.stop()
-
-df.dropna(subset=required_cols, inplace=True)
-
-# --- Filters ---
+# Sidebar filters
 st.sidebar.header("🔍 Filter Options")
-vendors = st.sidebar.multiselect("Select Vendors", df['Vendor'].unique(), default=list(df['Vendor'].unique()))
-categories = st.sidebar.multiselect("Select Categories", df['Expense Category'].unique(), default=list(df['Expense Category'].unique()))
+vendors = st.sidebar.multiselect("Select Vendors", df["Vendor"].dropna().unique(), default=list(df["Vendor"].dropna().unique()))
+categories = st.sidebar.multiselect("Select Categories", df["Expense Category"].dropna().unique(), default=list(df["Expense Category"].dropna().unique()))
 view_option = st.sidebar.radio("View By", ["Monthly", "Quarterly"])
+group_by = st.sidebar.selectbox("Group Bars By", ["Expense Category", "Vendor", "Both"])
 
-df_filtered = df[df['Vendor'].isin(vendors) & df['Expense Category'].isin(categories)]
+# Apply filters
+df_filtered = df[df["Vendor"].isin(vendors) & df["Expense Category"].isin(categories)]
 
-# --- Aggregation ---
+# Select correct period column
 if view_option == "Monthly":
-    df_filtered['Period'] = df_filtered['InvoiceDate'].dt.to_period('M').dt.to_timestamp()
+    df_filtered["Period"] = df_filtered["Period_Month"]
 else:
-    df_filtered['Period'] = df_filtered['InvoiceDate'].dt.to_period('Q').dt.to_timestamp()
+    df_filtered["Period"] = df_filtered["Period_Quarter"]
 
-grouped = df_filtered.groupby(['Period', 'Expense Category', 'Vendor'])['Amount'].sum().reset_index()
+# Set group fields and color
+if group_by == "Expense Category":
+    group_fields = ["Period", "Expense Category"]
+    color_field = "Expense Category"
+elif group_by == "Vendor":
+    group_fields = ["Period", "Vendor"]
+    color_field = "Vendor"
+else:
+    group_fields = ["Period", "Vendor", "Expense Category"]
+    df_filtered["Vendor+Category"] = df_filtered["Vendor"] + " - " + df_filtered["Expense Category"]
+    color_field = "Vendor+Category"
 
-# --- Plotting ---
+# Group and plot
+grouped = df_filtered.groupby(group_fields)["Amount"].sum().reset_index()
+
 fig = px.bar(
     grouped,
     x="Period",
     y="Amount",
-    color="Expense Category",
+    color=color_field,
     barmode="group",
-    title=f"Expenses Grouped by {view_option}"
+    title=f"Expenses Grouped by {group_by}"
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Table View ---
+# Table
 with st.expander("📄 Show Filtered Data Table"):
-    st.dataframe(
-        df_filtered[['InvoiceDate', 'Vendor', 'Expense Category', 'Amount']].sort_values(
-            by='InvoiceDate', ascending=False
-        )
-    )
+    st.dataframe(df_filtered.sort_values(by="InvoiceDate", ascending=False))
