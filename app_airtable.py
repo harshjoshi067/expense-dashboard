@@ -10,7 +10,7 @@ st.title("📊 Interactive Expense Dashboard (Airtable)")
 # Airtable configuration
 AIRTABLE_TOKEN = st.secrets["airtable_token"]  # Put this in your Streamlit Cloud secrets
 BASE_ID = "appQFvAieZcCk4pGO"
-TABLE_NAME = "Invoices"
+TABLE_NAME = "Bills"
 
 # Fetch data from Airtable
 @st.cache_data
