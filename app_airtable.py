@@ -40,7 +40,7 @@ st.sidebar.header("🔍 Filter Options")
 vendors = st.sidebar.multiselect("Select Vendors", df["Vendor"].dropna().unique(), default=list(df["Vendor"].dropna().unique()))
 categories = st.sidebar.multiselect("Select Categories", df["Expense Category"].dropna().unique(), default=list(df["Expense Category"].dropna().unique()))
 view_option = st.sidebar.radio("View By", ["Monthly", "Quarterly"])
-group_by = st.sidebar.selectbox("Group Bars By", ["Expense Category", "Vendor", "Both"])
+group_by = st.sidebar.selectbox("Group Bars By", ["Expense Category", "Vendor"])
 
 # Apply filters
 df_filtered = df[df["Vendor"].isin(vendors) & df["Expense Category"].isin(categories)]
@@ -51,17 +51,13 @@ if view_option == "Monthly":
 else:
     df_filtered["Period"] = df_filtered["Period_Quarter"]
 
-# Set group fields and color
+# Set group fields and color field
 if group_by == "Expense Category":
     group_fields = ["Period", "Expense Category"]
     color_field = "Expense Category"
 elif group_by == "Vendor":
     group_fields = ["Period", "Vendor"]
     color_field = "Vendor"
-else:
-    group_fields = ["Period", "Vendor", "Expense Category"]
-    df_filtered["Vendor+Category"] = df_filtered["Vendor"] + " - " + df_filtered["Expense Category"]
-    color_field = "Vendor+Category"
 
 # Group and plot
 grouped = df_filtered.groupby(group_fields)["Amount"].sum().reset_index()
